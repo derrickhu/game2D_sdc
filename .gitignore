@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.DS_Store
+*.local
+.vite/
+minigame/game-bundle.js

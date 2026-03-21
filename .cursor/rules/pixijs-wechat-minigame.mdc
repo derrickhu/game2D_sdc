@@ -1,0 +1,143 @@
+---
+description: PixiJS 7 + 微信小游戏真机适配规则，避免已知的12个坑点
+globs: "**/*.ts"
+alwaysApply: false
+---
+
+# PixiJS 微信小游戏适配规则
+
+基于真机踩坑经验（PixiJS 7.3 + 基础库 3.12~3.15），编写 PixiJS 代码时必须遵守以下规则。
+
+## 1. 全局变量必须挂到 JS 引擎真实全局对象
+
+`GameGlobal` 不是 JS 全局作用域。polyfill 必须挂到 `globalThis` / `global`，不能只挂 `GameGlobal`：
+```javascript
+const _realGlobal = (typeof globalThis !== 'undefined' && globalThis)
+  || (typeof global !== 'undefined' && global) || GameGlobal;
+_realGlobal.document = document;
+_realGlobal.window = _realGlobal;
+```
+
+## 2. 定时器 API 需从模块作用域搬到全局
+
+`setTimeout`/`setInterval`/`requestAnimationFrame` 在真机 bundle 中不可用，必须在 adapter 中搬运到全局。**游戏代码中用 Ticker/TweenManager 代替 setInterval。**
+
+## 3. canvas 只读属性赋值用 try-catch 保护
+
+模拟器中 `window.canvas` 是只读属性，赋值会抛 TypeError：
+```javascript
+try { _realGlobal.canvas = canvas; } catch (_) {}
+```
+
+## 4. Object.defineProperty 需安全 patch
+
+PixiJS 大量使用 defineProperty，真机遇到不可配置属性会中断初始化。在 adapter 顶部 patch 为静默版本（只吞 TypeError）。
+
+## 5. PIXI.settings.ADAPTER 必须在 new Application 之前配置
+
+`createCanvas` 必须直接调 `wx.createCanvas()`，不能依赖 `document.createElement`：
+```typescript
+settings.ADAPTER = {
+  createCanvas: (w, h) => { const c = wx.createCanvas(); if(w) c.width=w; if(h) c.height=h; return c; },
+  getCanvasRenderingContext2D: () => { const c = wx.createCanvas(); return c.getContext('2d')?.constructor || Object; },
+  // ...
+};
+```
+
+## 6. createOffscreenCanvas 不可靠
+
+iPhone/鸿蒙/模拟器均不可用。**始终用 `wx.createCanvas()` 降级。**
+
+## 7. Texture.WHITE 必须用 fromBuffer 重建
+
+真机上 `gl.texImage2D(canvas)` 静默失败，导致 Graphics 填充全黑。用 `BaseTexture.fromBuffer(Uint8Array, 16, 16)` 重建，并用 `Object.defineProperty` 覆盖 getter。
+
+## 8. Canvas 纹理上传：Text/Graphics 真机不渲染
+
+**核心坑**：真机 `gl.texImage2D(canvas)` 静默失败。必须 patch `BaseImageResource.prototype.upload`，对 Canvas 源用 `getImageData → Uint8Array → gl.texImage2D` 同步覆盖。判断 Canvas 用 `typeof source.toTempFilePathSync === 'function'`。
+
+## 9. upload patch 中禁止调用 renderer.texture.bind
+
+会触发无限递归（bind→updateTexture→upload→bind...），导致内存飙升白屏。**加 `_inUpload` 重入保护。**
+
+## 10. EventSystem.mapPositionToPoint 必须覆盖
+
+真机 `canvas.parentElement` 为 null 且不可写，导致 rect 为 {width:0,height:0}，坐标计算除零 → 所有触摸无反应。在 Game.init() 后覆盖 mapPositionToPoint，兜底用屏幕逻辑尺寸。
+
+## 11. 触摸事件必须同时分发 touch 和 pointer
+
+PixiJS 7 用 Pointer Events。adapter 中 `wx.onTouchStart` 必须同时 dispatch `touchstart` + `pointerdown`（canvas 和 window 都要）。
+
+## 12. unsafe-eval 必须内联 patch
+
+微信禁止 eval/new Function。`@pixi/unsafe-eval` 的 tree-shaking 会导致 patch 失效。**在 Game.ts 中内联实现 `ShaderSystem.prototype.syncUniforms`，覆盖所有 GLSL uniform 类型。**
+
+## 13. canvas.style 必须用原始 defineProperty 挂载
+
+真机 canvas 是 C++ native 对象，`Object.defineProperty` 设置新属性会抛 TypeError。而安全 patch（规则 #4）会**静默吞掉**这个 TypeError，导致 `canvas.style` 始终为 `undefined`。
+
+**解决方案**：
+1. 在 adapter 中，安全 patch 之前保存 `_origDefineProperty` 引用
+2. canvas 属性设置全部用 `_origDefineProperty`，不走安全 patch
+3. 在 Game.ts 中 `new PIXI.Application()` 前做最终兜底：尝试直接赋值 → 尝试 Proxy → monkey-patch PixiJS 的 Renderer/EventSystem
+
+```javascript
+// adapter 中
+var _origDefineProperty = Object.defineProperty; // 必须在 patch 之前！
+// ... patch Object.defineProperty ...
+
+// 后续使用原始版本设置 canvas 属性
+_origDefineProperty.call(Object, mainCanvas, 'style', { value: _styleObj, ... });
+```
+
+## 14. 定时器 polyfill 必须最早执行
+
+`setTimeout` 等定时器在真机 bundle 中不可用，且 WeChat 框架（WAGame.js）也可能在游戏代码之前就访问。polyfill 必须在 `Object.defineProperty` 安全 patch 之前执行，作为 adapter 的第一段代码。
+
+## 15. document.createElement 必须返回完整 DOM 桩
+
+PixiJS 的 AccessibilityManager 会调用 `document.createElement('div')` 和 `document.createElement('button')`，然后访问 `element.style.width`、`document.body.appendChild()` 等。adapter 中不能简单返回 `{}`，必须返回带 `style`、`appendChild`、`classList` 等属性的完整 DOM 桩对象。
+
+```javascript
+function _makeDOMStub() {
+  return {
+    style: {},
+    classList: { add(){}, remove(){} },
+    appendChild(c) { return c; },
+    removeChild(c) { return c; },
+    setAttribute() {}, getAttribute() { return null; },
+    addEventListener() {}, removeEventListener() {},
+    // ... 等等
+  };
+}
+```
+
+**`document.body` 也必须是 DOM 桩**，否则 `document.body.appendChild(div)` 会崩溃。
+
+## 16. performance.now() 需要 polyfill
+
+PixiJS 内部用 `performance.now()` 做帧计时，微信小游戏真机环境不提供 `performance` 全局变量。必须在 adapter 最前面 polyfill：
+
+```javascript
+if (typeof performance === 'undefined') {
+  var _t0 = Date.now();
+  _realGlobal.performance = { now: function() { return Date.now() - _t0; } };
+}
+```
+
+## 真机/模拟器差异速查
+
+| 特性 | 模拟器 | 真机 |
+|------|--------|------|
+| `GameGlobal === window` | ✅ | ❌ |
+| `setTimeout` 全局可用 | ✅ | ❌ 需 polyfill |
+| `gl.texImage2D(canvas)` | ✅ | ❌ 静默失败 |
+| `canvas.parentElement` 可写 | ⚠️ | ❌ |
+| `canvas.style` 可写 | ✅ | ❌ 需特殊处理 |
+| `createOffscreenCanvas` | ❌ | ❌ |
+
+## patch 执行顺序
+
+1. **game.js adapter**：**定时器 polyfill** → **保存原始 defineProperty** → defineProperty 安全 patch → 全局挂载 → canvas style（用原始 defineProperty） → 触摸桥接
+2. **Game.ts 初始化前**：settings.ADAPTER → unsafe-eval patch → Texture.WHITE → upload patch → **canvas.style 兜底** → PixiJS method patch
+3. **Game.ts 初始化后**：EventSystem.mapPositionToPoint 修复
