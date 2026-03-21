@@ -1,19 +1,21 @@
 /**
- * 横版玩家状态管理 - HP、背包、Buff、武器、无敌帧、重力物理
+ * 武将玩家管理器 - HP、攻击、背包、军符、物理
+ * 由 HeroConfig 驱动武将属性
  */
 import * as PIXI from 'pixi.js';
-import { TILE, PLAYER_HP, PLAYER_W, PLAYER_H, PLAYER_SPEED,
+import { TILE, PLAYER_HP, PLAYER_W, PLAYER_H, BASE_PLAYER_SPEED,
          PLAYER_SPEED_LOADED, PLAYER_IFRAMES, KNOCKBACK_DIST, SEARCH_DURATION } from '@/config/Constants';
-import { WEAPONS, DEFAULT_WEAPON, type WeaponDef } from '@/config/WeaponConfig';
+import { HEROES, DEFAULT_HERO, getHeroAtk, getHeroHp, getHeroDef, type HeroDef } from '@/config/HeroConfig';
 import { type BuffDef, randomBuff } from '@/config/BuffConfig';
 import { CollisionSystem, type PhysicsBody } from '@/systems/CollisionSystem';
 import { CameraSystem } from '@/systems/CameraSystem';
 import { VFXSystem } from '@/systems/VFXSystem';
 import { Platform } from '@/core/PlatformService';
 import { EventBus } from '@/core/EventBus';
+import type { ResourceType } from '@/config/Constants';
 
 export interface BackpackItem {
-  type: 'coin' | 'material' | 'weapon_shard' | 'key';
+  type: ResourceType;
   id: string;
   count: number;
 }
@@ -26,7 +28,6 @@ export interface ActiveBuff {
 const BACKPACK_SIZE = 8;
 
 class PlayerManagerClass {
-  /** 中心坐标（兼容旧代码） */
   get x(): number { return this.body.x + this.body.w / 2; }
   set x(v: number) { this.body.x = v - this.body.w / 2; }
   get y(): number { return this.body.y + this.body.h / 2; }
@@ -45,7 +46,14 @@ class PlayerManagerClass {
   alive = true;
   sprite: PIXI.Graphics | null = null;
 
-  weapon: WeaponDef = WEAPONS[DEFAULT_WEAPON];
+  /** 当前武将定义 */
+  heroDef: HeroDef = HEROES[DEFAULT_HERO];
+  heroLevel = 1;
+  /** 计算后的攻击力 */
+  atk = 28;
+  /** 计算后的防御 */
+  def = 12;
+
   fireCooldown = 0;
 
   backpack: (BackpackItem | null)[] = Array(BACKPACK_SIZE).fill(null);
@@ -65,6 +73,30 @@ class PlayerManagerClass {
   slowTimer = 0;
   slowFactor = 1;
 
+  /** 兼容旧引用 */
+  weapon = { name: '', damage: 28, fireRate: 2.5, range: 3, bulletCount: 1, spreadAngle: 0, id: '' };
+
+  /** 初始化武将属性 */
+  setHero(heroId: string, level: number): void {
+    const def = HEROES[heroId] || HEROES[DEFAULT_HERO];
+    this.heroDef = def;
+    this.heroLevel = level;
+    this.maxHp = getHeroHp(def, level);
+    this.hp = this.maxHp;
+    this.atk = getHeroAtk(def, level);
+    this.def = getHeroDef(def, level);
+    // 兼容旧 weapon 接口
+    this.weapon = {
+      name: def.name,
+      damage: this.atk,
+      fireRate: def.attackRate,
+      range: def.attackRange / TILE,
+      bulletCount: 1,
+      spreadAngle: 0,
+      id: heroId,
+    };
+  }
+
   reset(spawnX: number, spawnY: number): void {
     this.body.x = spawnX - PLAYER_W / 2;
     this.body.y = spawnY - PLAYER_H / 2;
@@ -74,12 +106,10 @@ class PlayerManagerClass {
     this.body.onLadder = false;
     this.body.climbing = false;
     this.facingRight = true;
-    this.hp = PLAYER_HP;
-    this.maxHp = PLAYER_HP;
+    this.hp = this.maxHp;
     this.alive = true;
     this.iframeTimer = 0;
     this.fireCooldown = 0;
-    this.weapon = WEAPONS[DEFAULT_WEAPON];
     this.backpack = Array(BACKPACK_SIZE).fill(null);
     this.backpackCount = 0;
     this.searchTarget = null;
@@ -95,7 +125,9 @@ class PlayerManagerClass {
   }
 
   get speed(): number {
-    const base = this.backpackCount >= BACKPACK_SIZE ? PLAYER_SPEED_LOADED : PLAYER_SPEED;
+    const base = this.backpackCount >= BACKPACK_SIZE
+      ? PLAYER_SPEED_LOADED
+      : this.heroDef.baseSpeed;
     return base * this.spdMultiplier * this.slowFactor;
   }
 
@@ -103,19 +135,20 @@ class PlayerManagerClass {
     return SEARCH_DURATION / this.searchSpeedMul;
   }
 
-  /** 横版移动：设置水平速度 */
+  /** 计算被动加成后的实际攻击力 */
+  get effectiveAtk(): number {
+    return Math.round(this.atk * this.atkMultiplier);
+  }
+
   moveHorizontal(dir: number): void {
     this.body.vx = dir * this.speed;
     if (dir > 0) this.facingRight = true;
     else if (dir < 0) this.facingRight = false;
   }
 
-  /** 梯子攀爬 - 立即抓住梯子并清除下落速度 */
   climbVertical(dir: number): void {
     if (this.body.onLadder) {
-      if (!this.body.climbing) {
-        this.body.vy = 0;
-      }
+      if (!this.body.climbing) this.body.vy = 0;
       this.body.climbing = true;
       this.body.vy = dir * this.speed * 0.7;
     } else {
@@ -123,7 +156,6 @@ class PlayerManagerClass {
     }
   }
 
-  /** 停止攀爬 */
   stopClimb(): void {
     this.body.climbing = false;
   }
@@ -172,11 +204,10 @@ class PlayerManagerClass {
 
   takeDamage(amount: number, fromX: number, fromY: number): void {
     if (!this.alive || this.iframeTimer > 0) return;
-    const realDamage = Math.ceil(amount * this.defMultiplier);
+    const realDamage = Math.max(1, Math.ceil(amount - this.def * this.defMultiplier * 0.3));
     this.hp -= realDamage;
     this.iframeTimer = PLAYER_IFRAMES;
 
-    // 击退（水平方向为主）
     const dx = this.x - fromX;
     const dir = dx > 0 ? 1 : -1;
     this.body.vx = dir * KNOCKBACK_DIST * 3;
@@ -202,7 +233,7 @@ class PlayerManagerClass {
   }
 
   pickup(item: BackpackItem): boolean {
-    if (item.type === 'coin') return true;
+    if (item.type === 'copper') return true;
     for (let i = 0; i < BACKPACK_SIZE; i++) {
       const slot = this.backpack[i];
       if (slot && slot.type === item.type && slot.id === item.id) {
@@ -235,10 +266,7 @@ class PlayerManagerClass {
       this.slowTimer -= dt;
       if (this.slowTimer <= 0) this.slowFactor = 1;
     }
-
-    // 物理更新
     CollisionSystem.updateBody(this.body, dt);
-    // 离开梯子范围自动解除攀爬
     if (this.body.climbing && !this.body.onLadder) {
       this.body.climbing = false;
     }

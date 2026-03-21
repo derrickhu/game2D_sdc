@@ -1,10 +1,10 @@
 /**
- * 横版主动技能系统 - 冲刺/手雷/护盾/急救 + CD管理
+ * 三国武将技能系统 - 专属主动技 + CD管理
  */
 import * as PIXI from 'pixi.js';
 import { Game } from '@/core/Game';
 import { TILE } from '@/config/Constants';
-import { SKILLS, type SkillDef } from '@/config/SkillConfig';
+import { ACTIVE_SKILLS, type ActiveSkillDef } from '@/config/SkillConfig';
 import { PlayerManager } from '@/managers/PlayerManager';
 import { EnemyManager } from '@/managers/EnemyManager';
 import { InputSystem } from './InputSystem';
@@ -13,14 +13,8 @@ import { VFXSystem } from './VFXSystem';
 import { Platform } from '@/core/PlatformService';
 import { EventBus } from '@/core/EventBus';
 
-const DASH_DISTANCE = 3;
-const GRENADE_DAMAGE = 80;
-const GRENADE_RANGE = 2;
-const SHIELD_DURATION = 3;
-const HEAL_AMOUNT = 40;
-
 class SkillSystemClass {
-  private _skillDef: SkillDef | null = null;
+  private _skillDef: ActiveSkillDef | null = null;
   private _cooldown = 0;
   private _button: PIXI.Container | null = null;
   private _btnBg: PIXI.Graphics | null = null;
@@ -38,7 +32,7 @@ class SkillSystemClass {
 
   init(hudContainer: PIXI.Container, skillId: string): void {
     this._hudContainer = hudContainer;
-    this._skillDef = SKILLS[skillId] || null;
+    this._skillDef = ACTIVE_SKILLS[skillId] || null;
     this._cooldown = 0;
     this.shieldActive = false;
     this._shieldTimer = 0;
@@ -64,7 +58,7 @@ class SkillSystemClass {
     this._button.addChild(this._cdOverlay);
 
     this._btnText = new PIXI.Text(this._skillDef.name, {
-      fontSize: 16, fill: 0xffffff, fontFamily: 'Arial', fontWeight: 'bold',
+      fontSize: 14, fill: 0xffffff, fontFamily: 'Arial', fontWeight: 'bold',
     });
     this._btnText.anchor.set(0.5);
     this._btnText.eventMode = 'none';
@@ -77,11 +71,12 @@ class SkillSystemClass {
     if (!this._skillDef || this._cooldown > 0 || !PlayerManager.alive) return;
     this._cooldown = this._skillDef.cooldown;
     Platform.vibrateShort('medium');
+
     switch (this._skillDef.id) {
+      case 'qijinqichu': this._executeQijinqichu(); break;
+      case 'qinglongduanyue': this._executeQinglongduanyue(); break;
       case 'dash': this._executeDash(); break;
-      case 'grenade': this._executeGrenade(); break;
-      case 'shield': this._executeShield(); break;
-      case 'heal': this._executeHeal(); break;
+      default: this._executeDash(); break;
     }
     EventBus.emit('skill:used', this._skillDef.id);
   }
@@ -101,15 +96,26 @@ class SkillSystemClass {
         this._dashing = false;
         PlayerManager.iframeTimer = 0;
       } else {
-        const speed = DASH_DISTANCE * TILE / this._dashDuration * dt;
+        const speed = this._dashDuration > 0
+          ? (this._skillDef?.range || 3 * TILE) / this._dashDuration * dt
+          : 0;
         PlayerManager.body.vx = this._dashVx * speed / dt;
-        VFXSystem.spawnSparks(PlayerManager.x, PlayerManager.y, 2, 0x33ccff, 0.5);
+        VFXSystem.spawnSparks(PlayerManager.x, PlayerManager.y, 2, this._skillDef?.color || 0x33ccff, 0.5);
+      }
+    }
+
+    // 被动技能 - 武圣：低血量攻击加成
+    const passive = PlayerManager.heroDef.passiveSkill;
+    if (passive === 'wusheng') {
+      const hpRatio = PlayerManager.hp / PlayerManager.maxHp;
+      if (hpRatio < 0.3) {
+        PlayerManager.atkMultiplier = Math.max(PlayerManager.atkMultiplier, 1.4);
       }
     }
   }
 
-  private _executeDash(): void {
-    // 横版冲刺：仅水平方向
+  /** 赵云 - 七进七出：前冲 + 路径伤害 + 无敌 */
+  private _executeQijinqichu(): void {
     const dir = PlayerManager.facingRight ? 1 : -1;
     if (Math.abs(InputSystem.input.moveX) > 0.3) {
       this._dashVx = InputSystem.input.moveX > 0 ? 1 : -1;
@@ -117,29 +123,44 @@ class SkillSystemClass {
       this._dashVx = dir;
     }
     this._dashing = true;
-    this._dashTimer = this._dashDuration;
-    PlayerManager.iframeTimer = this._dashDuration + 0.1;
-    CameraSystem.addTrauma(0.15);
-    VFXSystem.spawnSparks(PlayerManager.x, PlayerManager.y, 8, 0x33ccff, 1.5);
+    this._dashTimer = this._skillDef?.duration || 0.2;
+    this._dashDuration = this._dashTimer;
+    PlayerManager.iframeTimer = this._dashTimer + 0.1;
+    CameraSystem.addTrauma(0.2);
+    VFXSystem.spawnSparks(PlayerManager.x, PlayerManager.y, 10, 0x33ccff, 1.5);
+
+    // 路径上对敌人造成伤害
+    const dmg = PlayerManager.effectiveAtk * (this._skillDef?.damageMul || 2);
+    const rangePx = this._skillDef?.range || 3 * TILE;
+    for (const e of EnemyManager.activeEnemies) {
+      const relX = (e.x - PlayerManager.x) * this._dashVx;
+      if (relX >= 0 && relX <= rangePx && Math.abs(e.y - PlayerManager.y) <= 40) {
+        EnemyManager.damageEnemy(e, dmg);
+        VFXSystem.showDamage(e.x, e.y - e.def.radius, dmg, 0x33ccff);
+        VFXSystem.spawnSparks(e.x, e.y, 6, 0x33ccff, 1);
+      }
+    }
   }
 
-  private _executeGrenade(): void {
+  /** 关羽 - 青龙断岳：前方大范围横斩 */
+  private _executeQinglongduanyue(): void {
     const px = PlayerManager.x, py = PlayerManager.y;
-    const throwDist = 3 * TILE;
     const dir = PlayerManager.facingRight ? 1 : -1;
-    const tx = px + dir * throwDist;
-    const ty = py;
+    const dmg = PlayerManager.effectiveAtk * (this._skillDef?.damageMul || 3);
+    const rangePx = this._skillDef?.range || 100;
 
-    VFXSystem.spawnSparks(tx, ty, 15, 0xff8844, 2);
-    VFXSystem.spawnSparks(tx, ty, 8, 0xffdd44, 1.5);
+    VFXSystem.spawnSparks(px + dir * 40, py, 15, 0xff6644, 2);
     CameraSystem.addTrauma(0.4);
     VFXSystem.hitstopFrames = 4;
 
-    const rangePx = GRENADE_RANGE * TILE;
     for (const e of EnemyManager.activeEnemies) {
-      const edx = e.x - tx, edy = e.y - ty;
-      if (edx * edx + edy * edy < rangePx * rangePx) {
-        EnemyManager.damageEnemy(e, GRENADE_DAMAGE);
+      const relX = (e.x - px) * dir;
+      if (relX >= 0 && relX <= rangePx && Math.abs(e.y - py) <= 60) {
+        EnemyManager.damageEnemy(e, dmg);
+        VFXSystem.showDamage(e.x, e.y - e.def.radius, dmg, 0xff6644);
+        // 击退
+        e.physics.vx = dir * 300;
+        e.physics.vy = -100;
         if (e.hp <= 0) {
           VFXSystem.spawnDeathExplosion(e.x, e.y, e.def.color);
           VFXSystem.addBloodSplatter(e.x, e.y, 0x661111);
@@ -149,17 +170,20 @@ class SkillSystemClass {
     }
   }
 
-  private _executeShield(): void {
-    this.shieldActive = true;
-    this._shieldTimer = SHIELD_DURATION;
-    PlayerManager.iframeTimer = SHIELD_DURATION;
-    VFXSystem.spawnSparks(PlayerManager.x, PlayerManager.y, 10, 0x44aaff, 1.2);
-  }
-
-  private _executeHeal(): void {
-    PlayerManager.hp = Math.min(PlayerManager.maxHp, PlayerManager.hp + HEAL_AMOUNT);
-    VFXSystem.showCoinPickup(PlayerManager.x, PlayerManager.y - 20, HEAL_AMOUNT);
-    VFXSystem.spawnSparks(PlayerManager.x, PlayerManager.y, 8, 0x44ff88, 1);
+  /** 通用闪避 */
+  private _executeDash(): void {
+    const dir = PlayerManager.facingRight ? 1 : -1;
+    if (Math.abs(InputSystem.input.moveX) > 0.3) {
+      this._dashVx = InputSystem.input.moveX > 0 ? 1 : -1;
+    } else {
+      this._dashVx = dir;
+    }
+    this._dashing = true;
+    this._dashTimer = 0.15;
+    this._dashDuration = 0.15;
+    PlayerManager.iframeTimer = 0.25;
+    CameraSystem.addTrauma(0.15);
+    VFXSystem.spawnSparks(PlayerManager.x, PlayerManager.y, 8, 0xaaaacc, 1.5);
   }
 
   private _drawCD(): void {

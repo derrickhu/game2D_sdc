@@ -1,6 +1,6 @@
 /**
- * 横版战斗场景 - 系统性升级版
- * 集成：迷雾探索 + 紧凑视口 + 搜索物件 + 波次系统 + 重设计HUD + 高密度装饰 + 流程优化
+ * 三国战斗场景
+ * 集成：迷雾探索 + 紧凑视口 + 搜索物件 + 波次系统 + HUD + 装饰 + 武将系统
  */
 import * as PIXI from 'pixi.js';
 import { Game } from '@/core/Game';
@@ -27,49 +27,49 @@ import { SkillSystem } from '@/systems/SkillSystem';
 import { Platform } from '@/core/PlatformService';
 import { setResultData } from './ResultScene';
 
-// ═══════════════ 配色板 ═══════════════
+// ═══════════════ 三国配色板 ═══════════════
 const C = {
-  BG:           0x12121e,
-  ROOM_BG:      0x2a2535,
-  WALL:         0x554a62,
-  WALL_LIGHT:   0x6a5e78,
-  WALL_DARK:    0x3a3448,
-  BRICK_LINE:   0x4a4458,
-  FLOOR:        0x6a5e4a,
+  BG:           0x1a1510,
+  ROOM_BG:      0x2a2520,
+  WALL:         0x5a4a3a,
+  WALL_LIGHT:   0x6a5a4a,
+  WALL_DARK:    0x3a3020,
+  BRICK_LINE:   0x4a4030,
+  FLOOR:        0x6a5a4a,
   FLOOR_PLANK:  0x7c6e56,
   FLOOR_DARK:   0x544838,
-  PLATFORM:     0x6a5a44,
+  PLATFORM:     0x7a6a54,
   PLAT_EDGE:    0x8a7a60,
   PLAT_SUPPORT: 0x4a3a28,
-  LADDER:       0x6a5a3a,
-  LADDER_RUNG:  0x7a6a4a,
+  LADDER:       0x8a7a5a,
+  LADDER_RUNG:  0x9a8a6a,
   SEARCH:       0xddaa33,
   SEARCH_HV:    0xffcc00,
-  EXTRACT:      0x33ff66,
+  EXTRACT:      0x33cc66,
   TORCH_STEM:   0x664422,
   TORCH_FLAME:  0xffaa22,
   TORCH_GLOW:   0xffdd44,
   LIGHT_WARM:   0xffaa44,
   COBWEB:       0x998877,
-  CHAIN:        0x888899,
+  CHAIN:        0x888866,
   BARREL:       0x664422,
   CRATE:        0x5a4422,
   BONE:         0xccccaa,
   BOOKSHELF:    0x553322,
-  PIPE:         0x556677,
+  PIPE:         0x556655,
   CRACK:        0x221a14,
   POSTER:       0x885533,
   MOSS:         0x334422,
-  DRIP:         0x3366aa,
-  RAIL:         0x667788,
+  DRIP:         0x336644,
+  RAIL:         0x667766,
 };
 
 const T = TILE;
 
-// ═══════════════ 搜索物件类型（根据房间主题映射） ═══════════════
-type SearchObjType = 'ammo_crate' | 'locker' | 'safe' | 'toolbox' | 'backpack';
+// ═══════════════ 搜索物件类型（三国主题） ═══════════════
+type SearchObjType = 'liangcao' | 'junxie' | 'mizhao' | 'jiangyin';
 const THEME_SEARCH_MAP: Record<string, SearchObjType> = {
-  storage: 'ammo_crate', prison: 'toolbox', library: 'locker', ritual: 'safe', corridor: 'backpack',
+  storage: 'liangcao', prison: 'junxie', library: 'mizhao', ritual: 'jiangyin', corridor: 'liangcao',
 };
 
 export class BattleScene implements Scene {
@@ -144,9 +144,10 @@ export class BattleScene implements Scene {
     const spawnX = map.spawnPoint.gx * T + T / 2;
     const spawnY = map.spawnPoint.gy * T + T / 2;
 
+    const heroId = SaveManager.data.selectedHero;
+    const heroLevel = ProgressManager.getHeroLevel(heroId);
+    PlayerManager.setHero(heroId, heroLevel);
     PlayerManager.reset(spawnX, spawnY);
-    const upgradedWeapon = ProgressManager.getUpgradedWeapon(SaveManager.data.selectedWeapon);
-    PlayerManager.weapon = upgradedWeapon;
     this._createPlayerSprite();
 
     EnemyManager.init(this._entityContainer);
@@ -162,7 +163,7 @@ export class BattleScene implements Scene {
     this._hudContainer.eventMode = 'passive';
     this.container.eventMode = 'passive';
     InputSystem.init(this._hudContainer);
-    SkillSystem.init(this._hudContainer, SaveManager.data.selectedSkill);
+    SkillSystem.init(this._hudContainer, PlayerManager.heroDef.activeSkill);
     CameraSystem.snapTo(spawnX, spawnY);
 
     this._createHUD();
@@ -269,7 +270,7 @@ export class BattleScene implements Scene {
 
     const newLevel = DangerManager.level;
     if (newLevel > this._prevDangerLevel) {
-      const labels = ['Lv.1 平静', 'Lv.2 警戒', 'Lv.3 危险', 'Lv.4 崩溃'];
+      const labels = ['Lv.1 斥候', 'Lv.2 巡防', 'Lv.3 围剿', 'Lv.4 绝境'];
       VFXSystem.showDangerWarning(labels[newLevel] || '危险升级');
       CameraSystem.addTrauma(0.3);
       this._prevDangerLevel = newLevel;
@@ -320,31 +321,36 @@ export class BattleScene implements Scene {
 
   private _drawPlayer(g: PIXI.Graphics): void {
     const hw = PLAYER_W / 2, hh = PLAYER_H / 2;
+    const bodyColor = PlayerManager.heroDef.bodyColor;
+    const accent = PlayerManager.heroDef.accentColor;
     g.clear();
+    // 阴影
     g.beginFill(0x000000, 0.2);
     g.drawEllipse(0, hh + 2, hw * 0.8, 3);
     g.endFill();
-    g.beginFill(0x2288cc);
+    // 身体
+    g.beginFill(bodyColor);
     g.drawRoundedRect(-hw, -hh, PLAYER_W, PLAYER_H, 4);
     g.endFill();
-    g.beginFill(0x33aaee, 0.6);
+    // 肩甲
+    g.beginFill(accent, 0.6);
     g.drawRoundedRect(-hw + 2, -hh + 2, PLAYER_W - 4, 8, 2);
     g.endFill();
-    g.beginFill(0x33ccff);
+    // 头
+    g.beginFill(0xddccaa);
     g.drawCircle(0, -hh + 10, 7);
     g.endFill();
-    g.beginFill(0xffffff);
-    g.drawCircle(-3, -hh + 9, 2);
-    g.drawCircle(3, -hh + 9, 2);
+    // 眼睛
+    g.beginFill(0x000000);
+    g.drawCircle(-2.5, -hh + 9, 1.2);
+    g.drawCircle(2.5, -hh + 9, 1.2);
     g.endFill();
-    g.beginFill(0x111133);
-    g.drawCircle(-2.5, -hh + 9, 1);
-    g.drawCircle(3.5, -hh + 9, 1);
-    g.endFill();
-    g.beginFill(0x224466);
+    // 腰带
+    g.beginFill(accent, 0.7);
     g.drawRect(-hw, 2, PLAYER_W, 3);
     g.endFill();
-    g.beginFill(0x1a6699);
+    // 腿
+    g.beginFill(bodyColor, 0.8);
     g.drawRect(-hw + 1, 6, hw - 2, hh - 6);
     g.drawRect(1, 6, hw - 2, hh - 6);
     g.endFill();
@@ -750,7 +756,7 @@ export class BattleScene implements Scene {
         sp.pos.gx >= r.ix && sp.pos.gx < r.ix + ROOM_INNER_W &&
         sp.pos.gy >= r.iy && sp.pos.gy < r.iy + ROOM_INNER_H,
       );
-      const objType = room ? (THEME_SEARCH_MAP[room.theme] || 'ammo_crate') : 'ammo_crate';
+      const objType: SearchObjType = room ? (THEME_SEARCH_MAP[room.theme] || 'liangcao') : 'liangcao';
 
       const g = new PIXI.Graphics();
       this._drawSearchObject(g, objType, sp.isHighValue, false);
@@ -766,62 +772,57 @@ export class BattleScene implements Scene {
     const cx = T / 2, cy = T / 2;
 
     if (opened) {
-      // 已搜索：灰化 + 打开状态
-      g.beginFill(0x444444, 0.4);
+      g.beginFill(0x444433, 0.4);
       g.drawRect(cx - 10, cy - 6, 20, 12);
       g.endFill();
-      g.lineStyle(1, 0x555555, 0.3);
+      g.lineStyle(1, 0x555544, 0.3);
       g.drawRect(cx - 10, cy - 6, 20, 12);
-      // 翻开的盖子
       g.drawRect(cx - 10, cy - 10, 20, 4);
       g.lineStyle(0);
       return;
     }
 
     const baseColor = hv ? 0xffcc00 : 0xddaa33;
-    const darkColor = hv ? 0xaa8800 : 0x886622;
 
     switch (type) {
-      case 'ammo_crate':
-        // 军绿弹药箱
-        g.beginFill(0x445533, 0.9); g.drawRect(cx - 10, cy - 8, 20, 16); g.endFill();
-        g.lineStyle(1, 0x334422, 0.6); g.drawRect(cx - 10, cy - 8, 20, 16); g.lineStyle(0);
-        g.beginFill(0x667744, 0.5); g.drawRect(cx - 8, cy - 6, 16, 2); g.endFill();
-        g.beginFill(baseColor, 0.7);
-        g.moveTo(cx - 3, cy - 3); g.lineTo(cx + 3, cy - 3); g.lineTo(cx + 3, cy + 3);
-        g.lineTo(cx - 3, cy + 3); g.closePath();
+      case 'liangcao':
+        // 粮草车 - 木质车辆
+        g.beginFill(0x664422, 0.9); g.drawRect(cx - 12, cy - 6, 24, 12); g.endFill();
+        g.lineStyle(1, 0x553311, 0.6); g.drawRect(cx - 12, cy - 6, 24, 12); g.lineStyle(0);
+        // 粮草堆
+        g.beginFill(0x88aa44, 0.7);
+        g.moveTo(cx - 8, cy - 6); g.lineTo(cx, cy - 12); g.lineTo(cx + 8, cy - 6); g.closePath();
         g.endFill();
-        g.beginFill(baseColor, 0.7);
-        g.drawRect(cx - 1, cy - 5, 2, 4);
-        g.drawRect(cx - 5, cy - 1, 4, 2);
+        // 车轮
+        g.lineStyle(2, 0x443311, 0.7); g.drawCircle(cx - 8, cy + 6, 4); g.drawCircle(cx + 8, cy + 6, 4); g.lineStyle(0);
+        break;
+      case 'junxie':
+        // 军械架 - 兵器架
+        g.beginFill(0x554433, 0.9); g.drawRect(cx - 8, cy - 12, 16, 24); g.endFill();
+        g.lineStyle(1, 0x443322, 0.5); g.drawRect(cx - 8, cy - 12, 16, 24); g.lineStyle(0);
+        // 兵器
+        g.lineStyle(2, 0x888899, 0.7);
+        g.moveTo(cx - 3, cy - 10); g.lineTo(cx - 3, cy + 8);
+        g.moveTo(cx + 3, cy - 10); g.lineTo(cx + 3, cy + 8);
+        g.lineStyle(0);
+        g.beginFill(baseColor, 0.6); g.drawRect(cx - 6, cy - 2, 12, 2); g.endFill();
+        break;
+      case 'mizhao':
+        // 密诏匣 - 精致盒子
+        g.beginFill(0x883322, 0.9); g.drawRoundedRect(cx - 9, cy - 7, 18, 14, 2); g.endFill();
+        g.lineStyle(1, 0x662211, 0.6); g.drawRoundedRect(cx - 9, cy - 7, 18, 14, 2); g.lineStyle(0);
+        g.beginFill(baseColor, 0.8); g.drawCircle(cx, cy, 3); g.endFill();
+        // 封印纹
+        g.lineStyle(1, baseColor, 0.5); g.drawCircle(cx, cy, 5); g.lineStyle(0);
+        break;
+      case 'jiangyin':
+        // 将印残匣 - 闪光宝箱
+        g.beginFill(0x554422, 0.9); g.drawRoundedRect(cx - 10, cy - 8, 20, 16, 3); g.endFill();
+        g.lineStyle(2, baseColor, 0.8); g.drawRoundedRect(cx - 10, cy - 8, 20, 16, 3); g.lineStyle(0);
+        g.beginFill(baseColor, 0.9);
+        g.drawRect(cx - 2, cy - 3, 4, 6);
+        g.drawRect(cx - 4, cy - 1, 8, 2);
         g.endFill();
-        break;
-      case 'locker':
-        // 高柜子
-        g.beginFill(0x555566, 0.9); g.drawRect(cx - 8, cy - 12, 16, 24); g.endFill();
-        g.lineStyle(1, 0x444455, 0.5); g.drawRect(cx - 8, cy - 12, 16, 24); g.lineStyle(0);
-        g.beginFill(baseColor, 0.6); g.drawCircle(cx + 4, cy, 2); g.endFill();
-        break;
-      case 'safe':
-        // 保险箱
-        g.beginFill(0x555555, 0.9); g.drawRoundedRect(cx - 9, cy - 8, 18, 16, 2); g.endFill();
-        g.lineStyle(1, 0x444444, 0.6); g.drawRoundedRect(cx - 9, cy - 8, 18, 16, 2); g.lineStyle(0);
-        g.lineStyle(2, baseColor, 0.7); g.drawCircle(cx, cy, 5); g.lineStyle(0);
-        g.beginFill(baseColor, 0.5); g.drawCircle(cx + 6, cy - 2, 1.5); g.endFill();
-        break;
-      case 'toolbox':
-        // 工具箱
-        g.beginFill(0x994433, 0.9); g.drawRect(cx - 10, cy - 6, 20, 12); g.endFill();
-        g.lineStyle(1, 0x773322, 0.5); g.drawRect(cx - 10, cy - 6, 20, 12); g.lineStyle(0);
-        g.beginFill(darkColor, 0.7); g.drawRect(cx - 4, cy - 9, 8, 3); g.endFill();
-        g.beginFill(baseColor, 0.6); g.drawRect(cx - 2, cy - 2, 4, 4); g.endFill();
-        break;
-      case 'backpack':
-        // 军绿背包
-        g.beginFill(0x556633, 0.9); g.drawRoundedRect(cx - 8, cy - 10, 16, 20, 3); g.endFill();
-        g.lineStyle(1, 0x445522, 0.5); g.drawRoundedRect(cx - 8, cy - 10, 16, 20, 3); g.lineStyle(0);
-        g.beginFill(baseColor, 0.5); g.drawRect(cx - 4, cy - 4, 8, 2); g.endFill();
-        g.beginFill(0x445522, 0.6); g.drawRect(cx - 6, cy + 2, 12, 6); g.endFill();
         break;
     }
   }
@@ -894,7 +895,8 @@ export class BattleScene implements Scene {
     // ── 顶部信息栏 ──
 
     // 关卡名 + 计时器（居中）
-    const tplName = MapManager.template?.name || '未知区域';
+    const heroName = PlayerManager.heroDef.name;
+    const tplName = `${heroName} · ${MapManager.template?.name || '未知区域'}`;
     this._levelNameText = new PIXI.Text(tplName, {
       fontSize: 18, fill: 0xcccccc, fontFamily: 'Arial', fontWeight: 'bold',
       stroke: 0x000000, strokeThickness: 3,
@@ -947,8 +949,8 @@ export class BattleScene implements Scene {
     this._dangerText.anchor.set(0.5);
     this._dangerBadge.addChild(this._dangerText);
 
-    // 金币（右上）
-    this._coinText = new PIXI.Text('$0', { fontSize: 20, fill: 0xffdd44, fontWeight: 'bold', fontFamily: 'Arial',
+    // 铜钱（右上）
+    this._coinText = new PIXI.Text('铜0', { fontSize: 18, fill: 0xffdd44, fontWeight: 'bold', fontFamily: 'Arial',
       stroke: 0x000000, strokeThickness: 3 });
     this._coinText.anchor.set(1, 0);
     this._coinText.position.set(Game.logicWidth - 16, topY);
@@ -1079,7 +1081,7 @@ export class BattleScene implements Scene {
     // 危险等级
     if (this._dangerText) {
       const level = DangerManager.level;
-      const labels = ['血月 Lv.1', '血月 Lv.2', '血月 Lv.3', '血月 Lv.4'];
+      const labels = ['敌军 Lv.1', '敌军 Lv.2', '敌军 Lv.3', '敌军 Lv.4'];
       const colors = [0xff6644, 0xff4444, 0xff2222, 0xff0000];
       this._dangerText.text = labels[level] || labels[0];
       (this._dangerText.style as PIXI.TextStyle).fill = colors[level] || colors[0];
@@ -1087,7 +1089,7 @@ export class BattleScene implements Scene {
 
     // 金币
     if (this._coinText) {
-      const t = `$${RunManager.totalCoins}`;
+      const t = `铜${RunManager.runCopper}`;
       if (this._coinText.text !== t) { this._coinText.text = t; this._coinText.scale.set(1.3); }
       if (this._coinText.scale.x > 1) this._coinText.scale.set(Math.max(1, this._coinText.scale.x - dt * 3));
     }
@@ -1261,8 +1263,13 @@ export class BattleScene implements Scene {
 
   private _updateBackpackUI(): void {
     if (!this._backpackContainer) return;
-    const colorMap: Record<string, number> = { coin: 0xffdd44, material: 0xaa88ff, weapon_shard: 0x44aaff, key: 0xff8844 };
-    const labelMap: Record<string, string> = { material: '石', weapon_shard: '碎', key: '钥' };
+    const colorMap: Record<string, number> = {
+      copper: 0xffdd44, grain: 0x88cc44, wood: 0x886644, iron: 0x8888aa,
+      exp_book: 0x44aaff, soul: 0xaa88ff, class_scroll: 0xff8844, seal: 0xff4488,
+    };
+    const labelMap: Record<string, string> = {
+      grain: '粮', wood: '木', iron: '铁', exp_book: '书', soul: '魂', class_scroll: '卷', seal: '印',
+    };
     for (let i = 0; i < 8; i++) {
       const slot = PlayerManager.backpack[i];
       const g = this._backpackSlots[i];
@@ -1394,10 +1401,14 @@ export class BattleScene implements Scene {
   private _goToResult(success: boolean): void {
     setResultData({
       success,
-      coins: RunManager.totalCoins,
-      shards: RunManager.totalShards + PlayerManager.getItemCount('weapon_shard'),
-      stones: RunManager.totalStones + PlayerManager.getItemCount('material'),
-      keys: RunManager.totalKeys + PlayerManager.getItemCount('key'),
+      copper: RunManager.runCopper,
+      grain: RunManager.runGrain + PlayerManager.getItemCount('grain'),
+      wood: RunManager.runWood + PlayerManager.getItemCount('wood'),
+      iron: RunManager.runIron + PlayerManager.getItemCount('iron'),
+      expBook: RunManager.runExpBook + PlayerManager.getItemCount('exp_book'),
+      soul: RunManager.runSoul + PlayerManager.getItemCount('soul'),
+      classScroll: RunManager.runClassScroll + PlayerManager.getItemCount('class_scroll'),
+      seal: RunManager.runSeal + PlayerManager.getItemCount('seal'),
       kills: RunManager.totalKills,
       survivalTime: DangerManager.elapsed,
       searchedCount: RunManager.searchedCount,

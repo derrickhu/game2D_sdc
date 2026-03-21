@@ -1,5 +1,5 @@
 /**
- * 横版怪物管理器 - 重力物理 + 平台巡逻 + 追踪AI + 受击闪白 + HP条 + 胖子自爆
+ * 三国敌人管理器 - 重力物理 + 巡逻 + 追踪AI + 受击闪白 + HP条
  */
 import * as PIXI from 'pixi.js';
 import { TILE } from '@/config/Constants';
@@ -10,7 +10,7 @@ import { VFXSystem } from '@/systems/VFXSystem';
 import { CameraSystem } from '@/systems/CameraSystem';
 import { EventBus } from '@/core/EventBus';
 
-export const enum EnemyState { IDLE, CHASE, ATTACK, DEAD, EXPLODING }
+export const enum EnemyState { IDLE, CHASE, ATTACK, DEAD }
 
 export interface Enemy {
   active: boolean;
@@ -29,9 +29,6 @@ export interface Enemy {
   /** 巡逻方向 */
   patrolDir: number;
   patrolTimer: number;
-  /** 胖子自爆蓄力 */
-  explodeTimer: number;
-  explodeWarning: PIXI.Graphics | null;
   // 保留兼容字段
   pathId: number;
   path: { x: number; y: number }[] | null;
@@ -40,8 +37,6 @@ export interface Enemy {
 
 const MAX_ENEMIES = 25;
 const FLASH_DURATION = 0.12;
-const FATTY_EXPLODE_RANGE = 2;
-const FATTY_EXPLODE_CHARGE = 2;
 const ELITE_SLOW_DURATION = 2;
 const ELITE_SLOW_FACTOR = 0.5;
 
@@ -69,7 +64,6 @@ class EnemyManagerClass {
         container: ct, body, hpBar, flashTimer: 0,
         physics: { x: 0, y: 0, vx: 0, vy: 0, w: 24, h: 24, onGround: false, onLadder: false, climbing: false },
         patrolDir: 1, patrolTimer: 0,
-        explodeTimer: 0, explodeWarning: null,
         pathId: -1, path: null, pathIndex: 0,
       });
     }
@@ -93,7 +87,6 @@ class EnemyManagerClass {
     enemy.state = EnemyState.IDLE;
     enemy.attackTimer = 0;
     enemy.flashTimer = 0;
-    enemy.explodeTimer = 0;
     enemy.patrolDir = Math.random() < 0.5 ? 1 : -1;
     enemy.patrolTimer = 2 + Math.random() * 3;
 
@@ -148,13 +141,7 @@ class EnemyManagerClass {
             e.state = EnemyState.IDLE;
             break;
           }
-          if (e.def.id === 'fatty' && distTiles <= e.def.attackRange) {
-            e.state = EnemyState.EXPLODING;
-            e.explodeTimer = FATTY_EXPLODE_CHARGE;
-            this._showExplodeWarning(e);
-            break;
-          }
-          if (distTiles <= e.def.attackRange && e.def.id !== 'fatty') {
+          if (distTiles <= e.def.attackRange) {
             e.state = EnemyState.ATTACK;
             e.attackTimer = 0;
             break;
@@ -170,27 +157,14 @@ class EnemyManagerClass {
           }
           e.attackTimer -= dt;
           if (e.attackTimer <= 0) {
-            if (e.def.attackRange <= 1.5) {
+            if (!e.def.isRanged) {
               PlayerManager.takeDamage(e.def.damage, e.x, e.y);
-              if (e.def.id === 'elite') PlayerManager.applySlow(ELITE_SLOW_DURATION, ELITE_SLOW_FACTOR);
+              if (e.def.isElite) PlayerManager.applySlow(ELITE_SLOW_DURATION, ELITE_SLOW_FACTOR);
             } else {
               EventBus.emit('enemy:shoot', e.x, e.y, px, py, e.def.damage, e.def.attackRange);
-              if (e.def.id === 'elite') PlayerManager.applySlow(ELITE_SLOW_DURATION, ELITE_SLOW_FACTOR);
             }
             e.attackTimer = e.def.attackInterval;
           }
-          break;
-        }
-
-        case EnemyState.EXPLODING: {
-          e.explodeTimer -= dt;
-          const flashRate = Math.max(0.05, e.explodeTimer * 0.15);
-          if (Math.floor(e.explodeTimer / flashRate) % 2 === 0) {
-            this._drawBody(e, 0xff2222);
-          } else {
-            this._drawBody(e, e.def.color);
-          }
-          if (e.explodeTimer <= 0) this._explode(e);
           break;
         }
       }
@@ -234,36 +208,6 @@ class EnemyManagerClass {
 
   private _isPlatformAt(gx: number, gy: number): boolean {
     return !!CollisionSystem.pointSolid(gx * TILE + TILE / 2, gy * TILE + TILE / 2);
-  }
-
-  private _explode(e: Enemy): void {
-    const rangePx = FATTY_EXPLODE_RANGE * TILE;
-    const dx = PlayerManager.x - e.x, dy = PlayerManager.y - e.y;
-    if (dx * dx + dy * dy < rangePx * rangePx) {
-      PlayerManager.takeDamage(e.def.damage, e.x, e.y);
-    }
-    VFXSystem.spawnSparks(e.x, e.y, 20, 0xff4422, 2.5);
-    VFXSystem.spawnSparks(e.x, e.y, 10, 0xffdd44, 1.5);
-    VFXSystem.addBloodSplatter(e.x, e.y, 0x883333);
-    CameraSystem.addTrauma(0.5);
-    VFXSystem.hitstopFrames = 5;
-    e.active = false;
-    e.container.visible = false;
-    if (e.explodeWarning) e.explodeWarning.visible = false;
-    EventBus.emit('enemy:killed', e.x, e.y, e.def.id);
-  }
-
-  private _showExplodeWarning(e: Enemy): void {
-    if (!e.explodeWarning) {
-      e.explodeWarning = new PIXI.Graphics();
-      e.explodeWarning.eventMode = 'none';
-      e.container.addChild(e.explodeWarning);
-    }
-    const g = e.explodeWarning;
-    g.clear();
-    g.lineStyle(2, 0xff2222, 0.5);
-    g.drawCircle(0, 0, FATTY_EXPLODE_RANGE * TILE);
-    g.visible = true;
   }
 
   damageEnemy(enemy: Enemy, amount: number): void {

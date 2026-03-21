@@ -1,8 +1,8 @@
 /**
- * 掉落物管理器 - 地面掉落物生成、显示、自动拾取
+ * 三国掉落物管理器 - 地面掉落物生成、显示、自动拾取
  */
 import * as PIXI from 'pixi.js';
-import { TILE, PICKUP_RANGE } from '@/config/Constants';
+import { TILE, PICKUP_RANGE, type ResourceType } from '@/config/Constants';
 import { rollLoot, type LootDrop } from '@/config/LootTable';
 import { PlayerManager } from './PlayerManager';
 import { RunManager } from './RunManager';
@@ -23,11 +23,14 @@ const PICKUP_DIST = PICKUP_RANGE * TILE;
 const ITEM_LIFETIME = 30;
 
 const COLOR_MAP: Record<string, number> = {
-  coin: 0xffdd44,
-  weapon_shard: 0x44aaff,
-  material: 0xaa88ff,
-  buff: 0x44ff88,
-  key: 0xff8844,
+  copper: 0xffdd44,
+  grain: 0x88cc44,
+  wood: 0x886644,
+  iron: 0x8888aa,
+  exp_book: 0x44aaff,
+  soul: 0xaa88ff,
+  class_scroll: 0xff8844,
+  seal: 0xff4488,
 };
 
 class LootManagerClass {
@@ -44,41 +47,34 @@ class LootManagerClass {
       container.addChild(gfx);
       this._pool.push({
         active: false,
-        drop: { type: 'coin', itemId: 'gold', weight: 1, minCount: 1, maxCount: 1 },
+        drop: { type: 'copper' as ResourceType, itemId: 'copper', weight: 1, minCount: 1, maxCount: 1 },
         count: 0, x: 0, y: 0, gfx, age: 0,
       });
     }
   }
 
   /** 搜索完成时根据掉落表生成物品 */
-  rollSearchDrop(x: number, y: number, isHighValue: boolean): { type: string; count: number } {
-    const tableId = isHighValue ? 'search_high_value' : 'search_normal';
-    const drop = rollLoot(tableId);
-    if (!drop) return { type: 'coin', count: 20 };
+  rollSearchDrop(x: number, y: number, lootTableId: string): { type: string; count: number } {
+    const drop = rollLoot(lootTableId);
+    if (!drop) return { type: 'copper', count: 20 };
 
     const count = drop.minCount + Math.floor(Math.random() * (drop.maxCount - drop.minCount + 1));
 
-    if (drop.type === 'buff') {
-      EventBus.emit('loot:buff', x, y);
-      return { type: 'buff', count: 1 };
+    if (drop.type === 'copper') {
+      RunManager.runCopper += count;
+      PlayerManager.pickup({ type: 'copper', id: 'copper', count });
+      return { type: 'copper', count };
     }
 
-    if (drop.type === 'coin') {
-      RunManager.totalCoins += count;
-      PlayerManager.pickup({ type: 'coin', id: 'gold', count });
-      return { type: 'coin', count };
-    }
-
-    // 其他类型：生成地面掉落物
     this._spawn(x, y, drop, count);
     return { type: drop.type, count };
   }
 
   /** 敌人击杀时散落物品 */
-  spawnEnemyDrop(x: number, y: number): void {
+  spawnEnemyDrop(x: number, y: number, lootTableId: string = 'enemy_common'): void {
     const dropCount = 1 + Math.floor(Math.random() * 2);
     for (let i = 0; i < dropCount; i++) {
-      const drop = rollLoot('enemy_kill');
+      const drop = rollLoot(lootTableId);
       if (!drop) continue;
       const count = drop.minCount + Math.floor(Math.random() * (drop.maxCount - drop.minCount + 1));
       const ox = (Math.random() - 0.5) * TILE;
@@ -87,7 +83,6 @@ class LootManagerClass {
     }
   }
 
-  /** 每帧检测自动拾取 */
   update(dt: number): void {
     const px = PlayerManager.x, py = PlayerManager.y;
 
@@ -100,10 +95,8 @@ class LootManagerClass {
         continue;
       }
 
-      // 浮动动画
       item.gfx.y = item.y + Math.sin(item.age * 3) * 3;
 
-      // 自动拾取检测
       const dx = px - item.x, dy = py - item.y;
       if (dx * dx + dy * dy < PICKUP_DIST * PICKUP_DIST) {
         this._pickupItem(item);
@@ -123,7 +116,7 @@ class LootManagerClass {
     item.age = 0;
 
     const color = COLOR_MAP[drop.type] || 0xffffff;
-    const r = drop.type === 'coin' ? 4 : 5;
+    const r = drop.type === 'copper' ? 4 : 5;
     item.gfx.clear();
     item.gfx.beginFill(color, 0.3);
     item.gfx.drawCircle(0, 0, r + 3);
@@ -139,14 +132,15 @@ class LootManagerClass {
   }
 
   private _pickupItem(item: GroundItem): void {
-    if (item.drop.type === 'coin') {
-      RunManager.totalCoins += item.count;
+    if (item.drop.type === 'copper') {
+      RunManager.runCopper += item.count;
     } else {
-      const bpItem = { type: item.drop.type as any, id: item.drop.itemId, count: item.count };
+      const bpItem = { type: item.drop.type as ResourceType, id: item.drop.itemId, count: item.count };
       if (!PlayerManager.pickup(bpItem)) {
         EventBus.emit('backpack:full');
         return;
       }
+      RunManager.addResource(item.drop.type as ResourceType, item.count);
     }
 
     VFXSystem.showCoinPickup(item.x, item.y - 10, item.count);

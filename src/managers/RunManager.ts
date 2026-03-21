@@ -1,8 +1,9 @@
 /**
- * 单局状态机 - 准备 → 搜索 → 撤离 → 结算
+ * 三国单局状态机 - 准备 → 搜索 → 撤离 → 结算
  */
 import { EXTRACTION_APPEAR_TIME, EXTRACTION_COUNTDOWN, EXTRACTION_SIZE,
-         TILE, SEARCH_TRIGGER_DIST, SEARCH_CANCEL_DIST } from '@/config/Constants';
+         TILE, SEARCH_TRIGGER_DIST, SEARCH_CANCEL_DIST, type ResourceType } from '@/config/Constants';
+import { SEARCH_TYPE_LOOT } from '@/config/LootTable';
 import { MapManager, type GridPos, type SearchPointData } from './MapManager';
 import { PlayerManager } from './PlayerManager';
 import { DangerManager } from './DangerManager';
@@ -18,15 +19,27 @@ class RunManagerClass {
   extractionActive = false;
   extractionPos: GridPos | null = null;
 
-  totalCoins = 0;
-  totalShards = 0;
-  totalStones = 0;
-  totalKeys = 0;
+  /** 本局收集的资源 */
+  runCopper = 0;
+  runGrain = 0;
+  runWood = 0;
+  runIron = 0;
+  runExpBook = 0;
+  runSoul = 0;
+  runClassScroll = 0;
+  runSeal = 0;
   totalKills = 0;
   searchedCount = 0;
 
-  /** 本局游戏时间（PLAYING 阶段累积） */
+  /** 本局游戏时间 */
   gameTimer = 0;
+
+  /** 兼容旧引用 */
+  get totalCoins(): number { return this.runCopper; }
+  set totalCoins(v: number) { this.runCopper = v; }
+  get totalShards(): number { return this.runExpBook; }
+  get totalStones(): number { return this.runWood; }
+  get totalKeys(): number { return this.runSeal; }
 
   reset(): void {
     this.state = RunState.PREP;
@@ -34,13 +47,31 @@ class RunManagerClass {
     this.extractionCountdown = 0;
     this.extractionActive = false;
     this.extractionPos = null;
-    this.totalCoins = 0;
-    this.totalShards = 0;
-    this.totalStones = 0;
-    this.totalKeys = 0;
+    this.runCopper = 0;
+    this.runGrain = 0;
+    this.runWood = 0;
+    this.runIron = 0;
+    this.runExpBook = 0;
+    this.runSoul = 0;
+    this.runClassScroll = 0;
+    this.runSeal = 0;
     this.totalKills = 0;
     this.searchedCount = 0;
     this.gameTimer = 0;
+  }
+
+  /** 累加单项资源 */
+  addResource(type: ResourceType, count: number): void {
+    switch (type) {
+      case 'copper': this.runCopper += count; break;
+      case 'grain': this.runGrain += count; break;
+      case 'wood': this.runWood += count; break;
+      case 'iron': this.runIron += count; break;
+      case 'exp_book': this.runExpBook += count; break;
+      case 'soul': this.runSoul += count; break;
+      case 'class_scroll': this.runClassScroll += count; break;
+      case 'seal': this.runSeal += count; break;
+    }
   }
 
   update(dt: number): void {
@@ -56,7 +87,6 @@ class RunManagerClass {
       case RunState.PLAYING:
         this.gameTimer += dt;
         this._checkSearch(dt);
-
         if (DangerManager.elapsed >= EXTRACTION_APPEAR_TIME && !this.extractionActive) {
           this._activateExtraction();
         }
@@ -68,7 +98,7 @@ class RunManagerClass {
         if (this.extractionCountdown <= 0) {
           if (this._playerInExtractionZone()) {
             this.state = RunState.SUCCESS;
-            EventBus.emit('run:success', this.totalCoins);
+            EventBus.emit('run:success', this.runCopper);
           } else {
             this.state = RunState.PLAYING;
             this.extractionActive = false;
@@ -87,7 +117,6 @@ class RunManagerClass {
     EventBus.emit('run:extracting');
   }
 
-  /** 格式化的游戏时间 mm:ss */
   get formattedTime(): string {
     const s = Math.floor(this.gameTimer);
     const m = Math.floor(s / 60);
@@ -140,11 +169,11 @@ class RunManagerClass {
 
         const spx = sp.pos.gx * TILE + TILE / 2;
         const spy = sp.pos.gy * TILE + TILE / 2;
-        const result = LootManager.rollSearchDrop(spx, spy, sp.isHighValue);
-        const displayCount = result.type === 'coin' ? result.count : 1;
+        const lootTableId = SEARCH_TYPE_LOOT[sp.searchType] || 'search_liangcao';
+        const result = LootManager.rollSearchDrop(spx, spy, lootTableId);
+        const displayCount = result.type === 'copper' ? result.count : 1;
         EventBus.emit('search:complete', sp.pos, displayCount, sp.isHighValue);
 
-        // 搜索完成触发额外小波怪物
         DangerManager.triggerSearchWave();
       }
       return;

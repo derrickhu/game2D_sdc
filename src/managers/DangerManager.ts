@@ -1,5 +1,5 @@
 /**
- * 波次系统 - 波次预告 → 刷怪 → 清场 → 休息 → 循环
+ * 三国波次系统 - 波次预告 → 刷怪 → 清场 → 休息 → 循环
  */
 import { TILE, WAVE_PREVIEW_DURATION, WAVE_REST_DURATION,
          WAVE_SEARCH_EXTRA_COUNT } from '@/config/Constants';
@@ -17,12 +17,12 @@ interface WaveConfig {
 }
 
 const BASE_WAVES: WaveConfig[] = [
-  { enemyCount: 3, enemyTypes: ['grunt'] },
-  { enemyCount: 4, enemyTypes: ['grunt', 'patrol'] },
-  { enemyCount: 5, enemyTypes: ['grunt', 'patrol'] },
-  { enemyCount: 5, enemyTypes: ['grunt', 'patrol', 'elite'] },
-  { enemyCount: 6, enemyTypes: ['grunt', 'patrol', 'elite'] },
-  { enemyCount: 7, enemyTypes: ['grunt', 'patrol', 'elite', 'fatty'] },
+  { enemyCount: 3, enemyTypes: ['luanbing'] },
+  { enemyCount: 4, enemyTypes: ['luanbing', 'gongShou'] },
+  { enemyCount: 5, enemyTypes: ['luanbing', 'gongShou'] },
+  { enemyCount: 5, enemyTypes: ['luanbing', 'gongShou', 'daoTun'] },
+  { enemyCount: 6, enemyTypes: ['luanbing', 'gongShou', 'daoTun'] },
+  { enemyCount: 7, enemyTypes: ['luanbing', 'gongShou', 'daoTun', 'xiaoWei'] },
 ];
 
 class DangerManagerClass {

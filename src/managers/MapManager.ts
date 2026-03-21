@@ -18,7 +18,13 @@ export interface RoomData {
   distToSpawn: number;
   theme: 'storage' | 'prison' | 'library' | 'ritual' | 'corridor';
 }
-export interface SearchPointData { pos: GridPos; isHighValue: boolean; searched: boolean; }
+export interface SearchPointData {
+  pos: GridPos;
+  isHighValue: boolean;
+  searched: boolean;
+  /** 搜索点类型（三国主题）: liangcao / junxie / mizhao / jiangyin */
+  searchType: string;
+}
 export interface MapData {
   width: number; height: number;
   tiles: number[][];
@@ -112,7 +118,8 @@ class MapManagerClass {
       extractionPoints.push({ gx: sortedByDist[0].ix + Math.floor(ROOM_INNER_W / 2), gy: floorStandY(sortedByDist[0]) });
     }
 
-    // 搜索点 — 每个非出生房间 1~2 个，直接放地板上
+    // 搜索点 — 每个非出生房间 1~2 个，按模板可用搜索类型分配
+    const searchTypes = this._template.searchTypes || ['liangcao', 'junxie'];
     const searchPoints: SearchPointData[] = [];
     for (const room of rooms) {
       if (room === spawnRoom) continue;
@@ -120,7 +127,11 @@ class MapManagerClass {
       for (let i = 0; i < count; i++) {
         const gx = room.ix + 2 + Math.floor(Math.random() * (ROOM_INNER_W - 4));
         const gy = floorStandY(room);
-        searchPoints.push({ pos: { gx, gy }, isHighValue: room.distToSpawn >= 3 && i === 0, searched: false });
+        const isHV = room.distToSpawn >= 3 && i === 0;
+        const sType = isHV
+          ? (searchTypes.length > 2 ? searchTypes[2 + Math.floor(Math.random() * (searchTypes.length - 2))] : searchTypes[searchTypes.length - 1])
+          : searchTypes[Math.floor(Math.random() * Math.min(2, searchTypes.length))];
+        searchPoints.push({ pos: { gx, gy }, isHighValue: isHV, searched: false, searchType: sType });
       }
     }
 

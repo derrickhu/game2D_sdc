@@ -1,4 +1,7 @@
-/** 怪物配置表（适配 TILE_SIZE=48 的比例） */
+/**
+ * 三国敌人配置表
+ * M1：乱兵、弓手、守仓校尉（精英）
+ */
 
 export interface EnemyDef {
   id: string;
@@ -11,34 +14,55 @@ export interface EnemyDef {
   chaseRange: number;
   attackRange: number;
   attackInterval: number;
-  usePathfinding: boolean;
+  /** 是否远程 */
+  isRanged: boolean;
+  /** 是否精英 */
+  isElite: boolean;
+  /** 显示颜色 */
   color: number;
   shape: 'circle' | 'triangle' | 'diamond' | 'square';
+  /** 掉落表 ID */
+  lootTableId: string;
 }
 
 export const ENEMIES: Record<string, EnemyDef> = {
-  grunt: {
-    id: 'grunt', name: '小兵',
-    hp: 50, damage: 15, speed: 2, radius: 16,
-    senseRange: 5, chaseRange: 10, attackRange: 1, attackInterval: 1,
-    usePathfinding: false, color: 0xcc3333, shape: 'circle',
+  /** 乱兵 - 最基础近战单位，低血量低伤害 */
+  luanbing: {
+    id: 'luanbing', name: '乱兵',
+    hp: 40, damage: 12, speed: 2, radius: 14,
+    senseRange: 5, chaseRange: 10, attackRange: 1, attackInterval: 1.2,
+    isRanged: false, isElite: false,
+    color: 0x886644, shape: 'circle',
+    lootTableId: 'enemy_common',
   },
-  patrol: {
-    id: 'patrol', name: '巡逻怪',
-    hp: 100, damage: 25, speed: 2.5, radius: 16,
-    senseRange: 6, chaseRange: 12, attackRange: 3, attackInterval: 1.5,
-    usePathfinding: true, color: 0xdd7700, shape: 'triangle',
+  /** 弓手 - 远程单位，保持距离射箭 */
+  gongShou: {
+    id: 'gongShou', name: '弓手',
+    hp: 30, damage: 18, speed: 1.8, radius: 14,
+    senseRange: 7, chaseRange: 12, attackRange: 5, attackInterval: 2,
+    isRanged: true, isElite: false,
+    color: 0x669944, shape: 'triangle',
+    lootTableId: 'enemy_common',
   },
-  fatty: {
-    id: 'fatty', name: '胖子',
-    hp: 150, damage: 80, speed: 1.5, radius: 22,
-    senseRange: 4, chaseRange: Infinity, attackRange: 1, attackInterval: 3,
-    usePathfinding: false, color: 0x883333, shape: 'square',
+  /** 刀盾兵 - 高血量近战，移速慢 */
+  daoTun: {
+    id: 'daoTun', name: '刀盾兵',
+    hp: 80, damage: 20, speed: 1.5, radius: 16,
+    senseRange: 4, chaseRange: 8, attackRange: 1, attackInterval: 1.5,
+    isRanged: false, isElite: false,
+    color: 0x888866, shape: 'square',
+    lootTableId: 'enemy_common',
   },
-  elite: {
-    id: 'elite', name: '精英怪',
-    hp: 200, damage: 35, speed: 3.5, radius: 18,
-    senseRange: 8, chaseRange: 15, attackRange: 4, attackInterval: 2,
-    usePathfinding: true, color: 0xcc33cc, shape: 'diamond',
+  /** 守仓校尉 - 精英，高属性 + 特殊攻击模式 */
+  xiaoWei: {
+    id: 'xiaoWei', name: '守仓校尉',
+    hp: 200, damage: 30, speed: 2.5, radius: 20,
+    senseRange: 8, chaseRange: 15, attackRange: 2, attackInterval: 1.8,
+    isRanged: false, isElite: true,
+    color: 0xcc6633, shape: 'diamond',
+    lootTableId: 'enemy_elite',
   },
 };
+
+/** 兼容旧代码：usePathfinding 字段不再使用但保留接口兼容 */
+export type EnemyDefCompat = EnemyDef & { usePathfinding?: boolean };

@@ -1,5 +1,5 @@
 /**
- * 搜打撤小游戏 - 入口文件
+ * 三国轻搜打撤 - 入口文件
  */
 import { Game } from '@/core/Game';
 import { SceneManager } from '@/core/SceneManager';
@@ -47,5 +47,5 @@ if (!_canvas) {
     }
   });
 
-  console.log('[main] 搜打撤小游戏启动完毕');
+  console.log('[main] 三国轻搜打撤启动完毕');
 }
