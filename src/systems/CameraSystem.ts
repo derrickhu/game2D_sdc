@@ -62,10 +62,10 @@ class CameraSystemClass {
     this._clampY();
 
     this._time += dt;
-    this._trauma = Math.max(0, this._trauma - dt * 1.8);
+    this._trauma = Math.max(0, this._trauma - dt * 3.0);
     const shake = this._trauma * this._trauma;
-    this._shakeX = shake * 6 * Math.sin(this._time * 37);
-    this._shakeY = shake * 6 * Math.cos(this._time * 43);
+    this._shakeX = shake * 3 * Math.sin(this._time * 37);
+    this._shakeY = shake * 3 * Math.cos(this._time * 43);
 
     this._apply();
   }

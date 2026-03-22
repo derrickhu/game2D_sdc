@@ -44,7 +44,7 @@ class PlayerManagerClass {
   hp = PLAYER_HP;
   maxHp = PLAYER_HP;
   alive = true;
-  sprite: PIXI.Graphics | null = null;
+  sprite: PIXI.Container | null = null;
 
   /** 当前武将定义 */
   heroDef: HeroDef = HEROES[DEFAULT_HERO];
@@ -216,7 +216,7 @@ class PlayerManagerClass {
     this.searchTarget = null;
     this.searchProgress = 0;
 
-    CameraSystem.addTrauma(0.35);
+    CameraSystem.addTrauma(0.15);
     VFXSystem.flashHurt();
     VFXSystem.showDamage(this.x, this.y, realDamage, 0xff4444);
     VFXSystem.spawnSparks(this.x, this.y, 6, 0xff6644);
@@ -225,7 +225,7 @@ class PlayerManagerClass {
     if (this.hp <= 0) {
       this.hp = 0;
       this.alive = false;
-      CameraSystem.addTrauma(0.8);
+      CameraSystem.addTrauma(0.4);
       EventBus.emit('player:dead');
     } else {
       EventBus.emit('player:hurt');

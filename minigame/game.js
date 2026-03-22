@@ -8,6 +8,62 @@ var _realGlobal = (typeof globalThis !== 'undefined' && globalThis)
   || (typeof global !== 'undefined' && global)
   || GameGlobal;
 
+// ═══════════════ 0.1 URL 构造器安全补丁 ═══════════════
+// ★ 踩坑#20: PixiJS determineCrossOrigin 内部执行 new URL(...)
+// 模拟器有 URL 但 base 缺失会 Invalid URL；真机 URL 完全不存在 → ReferenceError
+// 统一提供一个永不抛异常的 URL polyfill
+;(function _patchURL() {
+  var _OrigURL = (typeof URL === 'function') ? URL : null;
+
+  // 简易 URL 解析（仅满足 PixiJS crossOrigin 判断：hostname / port / protocol）
+  function _parseURL(url, base) {
+    var href = (typeof url === 'string') ? url : '';
+    // 绝对 URL
+    var m = href.match(/^(https?:)\/\/([^/:]+)(:\d+)?(\/.*)?$/);
+    if (m) {
+      return {
+        href: href, origin: m[1] + '//' + m[2] + (m[3] || ''),
+        protocol: m[1], host: m[2] + (m[3] || ''), hostname: m[2],
+        port: m[3] ? m[3].slice(1) : '', pathname: m[4] || '/',
+        search: '', hash: '',
+        searchParams: { get: function(){ return null; } },
+        toString: function() { return href; },
+      };
+    }
+    // 相对 URL → 拼到 base 上
+    var b = (typeof base === 'string' && base) ? base : 'https://localhost/';
+    var bm = b.match(/^(https?:)\/\/([^/:]+)(:\d+)?/);
+    var bp = bm ? bm[1] : 'https:';
+    var bh = bm ? bm[2] : 'localhost';
+    var bport = (bm && bm[3]) ? bm[3].slice(1) : '';
+    var full = b.replace(/[?#].*$/, '').replace(/\/[^/]*$/, '/') + href;
+    return {
+      href: full, origin: bp + '//' + bh + (bport ? ':' + bport : ''),
+      protocol: bp, host: bh + (bport ? ':' + bport : ''), hostname: bh,
+      port: bport, pathname: '/' + href,
+      search: '', hash: '',
+      searchParams: { get: function(){ return null; } },
+      toString: function() { return full; },
+    };
+  }
+
+  function SafeURL(url, base) {
+    // 优先用原生 URL（模拟器可用）
+    if (_OrigURL) {
+      try { return new _OrigURL(url, base); } catch(_) {}
+      try { return new _OrigURL(url, 'https://localhost/'); } catch(_2) {}
+    }
+    return _parseURL(url, base);
+  }
+
+  // 保留静态方法
+  if (_OrigURL && _OrigURL.createObjectURL) SafeURL.createObjectURL = _OrigURL.createObjectURL.bind(_OrigURL);
+  if (_OrigURL && _OrigURL.revokeObjectURL) SafeURL.revokeObjectURL = _OrigURL.revokeObjectURL.bind(_OrigURL);
+
+  _realGlobal.URL = SafeURL;
+  try { GameGlobal.URL = SafeURL; } catch(_) {}
+})();
+
 // ═══════════════ 0.5 定时器 polyfill（必须在所有代码之前） ═══════════════
 // 踩坑#2: setTimeout 等在真机 bundle/框架中可能不可用
 // 必须最早执行，否则 LifeCycle.load 等框架代码找不到 setTimeout
@@ -148,6 +204,8 @@ try { GameGlobal.canvas = mainCanvas; } catch (_) {}
       if (arr) { var idx = arr.indexOf(fn); if (idx >= 0) arr.splice(idx, 1); }
     },
     dispatchEvent: function() { return true; },
+    // ★ 踩坑#19: PixiJS determineCrossOrigin 用 document.baseURI 做 new URL 的 base
+    baseURI: 'https://localhost/',
     body: _bodyStub,
     documentElement: _makeDOMStub(),
   };
@@ -160,6 +218,27 @@ try { if (typeof _realGlobal.window === 'undefined') _realGlobal.window = _realG
 try { GameGlobal.window = _realGlobal; } catch (_) {}
 try { if (typeof _realGlobal.self === 'undefined') _realGlobal.self = _realGlobal; } catch (_) {}
 try { if (typeof _realGlobal.navigator === 'undefined') _realGlobal.navigator = { userAgent: 'wxgame', platform: 'wxgame', maxTouchPoints: 10 }; } catch (_) {}
+
+// ★ 踩坑#18: PixiJS determineCrossOrigin 内部执行 new URL(src, location.href)
+// 微信小游戏没有 location，base 为 undefined → Invalid URL
+// 提供一个合法的虚拟 location 让 URL 构造器不崩
+;(function _patchLocation() {
+  if (typeof _realGlobal.location === 'undefined') {
+    var _loc = {
+      href: 'https://localhost/',
+      origin: 'https://localhost',
+      protocol: 'https:',
+      host: 'localhost',
+      hostname: 'localhost',
+      port: '',
+      pathname: '/',
+      search: '',
+      hash: '',
+    };
+    try { _realGlobal.location = _loc; } catch(_) {}
+    try { GameGlobal.location = _loc; } catch(_) {}
+  }
+})();
 
 // 踩坑#17: PixiJS EventSystem 用 globalThis.PointerEvent 决定事件模式
 // 如果不存在，会降级到 touch 事件模式，但我们桥接的是 pointer 事件
@@ -194,8 +273,12 @@ try {
   if (typeof _realGlobal.HTMLVideoElement === 'undefined') {
     _realGlobal.HTMLVideoElement = function HTMLVideoElement() {};
   }
-  if (typeof _realGlobal.Image === 'undefined') {
-    _realGlobal.Image = _realGlobal.HTMLImageElement;
+  // ★ 关键：new Image() 必须委托到 wx.createImage()，不能直接用原生构造器
+  if (typeof _realGlobal.Image === 'undefined' || _realGlobal.Image === _realGlobal.HTMLImageElement) {
+    _realGlobal.Image = function WxImage() {
+      return _api.createImage();
+    };
+    try { GameGlobal.Image = _realGlobal.Image; } catch(_) {}
   }
 })();
 

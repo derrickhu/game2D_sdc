@@ -27,6 +27,28 @@ import { SkillSystem } from '@/systems/SkillSystem';
 import { Platform } from '@/core/PlatformService';
 import { setResultData } from './ResultScene';
 
+/**
+ * 赵云试玩贴图源：微信/抖音小游戏用包内相对路径（构建时由 Vite 复制到 minigame/assets/）；
+ * 非小游戏环境再尝试 import.meta.url，避免顶层 new URL 在 wx 子包内抛 Invalid URL。
+ */
+function getZhaoYunTextureSource(): string {
+  if (typeof wx !== 'undefined' || typeof tt !== 'undefined') {
+    return 'assets/characters/zhaoyun/zhaoyun_transparent.png';
+  }
+  try {
+    const base = import.meta.url;
+    if (typeof base === 'string' && base.length > 0) {
+      return new URL(
+        '../../assets/03_game_assets/characters/heroes/zhaoyun/in_game/赵云_transparent.png',
+        base,
+      ).href;
+    }
+  } catch {
+    /* 非标准环境 */
+  }
+  return '';
+}
+
 // ═══════════════ 三国配色板 ═══════════════
 const C = {
   BG:           0x1a1510,
@@ -177,6 +199,8 @@ export class BattleScene implements Scene {
     this._prevDangerLevel = 0;
     this._extractPulseT = 0;
     this._breathT = 0;
+    this._lerpPrevX = this._lerpCurX = spawnX;
+    this._lerpPrevY = this._lerpCurY = spawnY;
 
     this._tickerFn = (delta: number) => this._mainLoop(delta);
     Game.ticker.add(this._tickerFn);
@@ -213,6 +237,11 @@ export class BattleScene implements Scene {
   private _dustTimer = 0;
   private _prevPlayerX = 0;
   private _prevPlayerY = 0;
+  // 固定步长插值：逻辑帧前后的位置
+  private _lerpPrevX = 0;
+  private _lerpPrevY = 0;
+  private _lerpCurX = 0;
+  private _lerpCurY = 0;
 
   private _mainLoop(delta: number): void {
     if (this._paused) return;
@@ -225,30 +254,39 @@ export class BattleScene implements Scene {
     } else {
       this._logicAcc += dt;
       while (this._logicAcc >= LOGIC_STEP) {
+        this._lerpPrevX = PlayerManager.x;
+        this._lerpPrevY = PlayerManager.y;
         this._logicUpdate(LOGIC_STEP);
+        this._lerpCurX = PlayerManager.x;
+        this._lerpCurY = PlayerManager.y;
         this._logicAcc -= LOGIC_STEP;
       }
     }
 
-    const pdx = PlayerManager.x - this._prevPlayerX;
-    const pdy = PlayerManager.y - this._prevPlayerY;
+    // 插值系数：当前帧在两次逻辑帧之间的进度
+    const alpha = this._logicAcc / LOGIC_STEP;
+    const renderX = this._lerpPrevX + (this._lerpCurX - this._lerpPrevX) * alpha;
+    const renderY = this._lerpPrevY + (this._lerpCurY - this._lerpPrevY) * alpha;
+
+    const pdx = renderX - this._prevPlayerX;
+    const pdy = renderY - this._prevPlayerY;
     if (pdx * pdx + pdy * pdy > 4) {
       this._dustTimer += dt;
       if (this._dustTimer > 0.08 && PlayerManager.body.onGround) {
-        VFXSystem.spawnMoveDust(PlayerManager.x, PlayerManager.y + PLAYER_H / 2);
+        VFXSystem.spawnMoveDust(renderX, renderY + PLAYER_H / 2);
         this._dustTimer = 0;
       }
     }
-    this._prevPlayerX = PlayerManager.x;
-    this._prevPlayerY = PlayerManager.y;
+    this._prevPlayerX = renderX;
+    this._prevPlayerY = renderY;
 
-    CameraSystem.update(PlayerManager.x, PlayerManager.y, dt);
-    FogSystem.update(dt, PlayerManager.x, PlayerManager.y);
-    VFXSystem.update(dt, PlayerManager.x, PlayerManager.y);
+    CameraSystem.update(renderX, renderY, dt);
+    FogSystem.update(dt, renderX, renderY);
+    VFXSystem.update(dt, renderX, renderY);
     VFXSystem.updatePermaVignette(DangerManager.level);
     LootManager.update(dt);
     SkillSystem.update(dt);
-    this._updatePlayerSprite(dt);
+    this._updatePlayerSprite(dt, renderX, renderY);
     this._updateHUD(dt);
     this._updateMinimap();
     this._updateSearchMarkersAnim(dt);
@@ -272,7 +310,7 @@ export class BattleScene implements Scene {
     if (newLevel > this._prevDangerLevel) {
       const labels = ['Lv.1 斥候', 'Lv.2 巡防', 'Lv.3 围剿', 'Lv.4 绝境'];
       VFXSystem.showDangerWarning(labels[newLevel] || '危险升级');
-      CameraSystem.addTrauma(0.3);
+      CameraSystem.addTrauma(0.12);
       this._prevDangerLevel = newLevel;
     }
 
@@ -311,12 +349,58 @@ export class BattleScene implements Scene {
   // ═══════════════ 玩家精灵 ═══════════════
 
   private _createPlayerSprite(): void {
-    const gfx = new PIXI.Graphics();
-    this._drawPlayer(gfx);
-    gfx.position.set(PlayerManager.x, PlayerManager.y);
-    gfx.eventMode = 'none';
-    this._entityContainer.addChild(gfx);
-    PlayerManager.sprite = gfx;
+    const ct = new PIXI.Container();
+    ct.position.set(PlayerManager.x, PlayerManager.y);
+    ct.eventMode = 'none';
+
+    const shadow = new PIXI.Graphics();
+    shadow.beginFill(0x000000, 0.18);
+    shadow.drawEllipse(0, PLAYER_H / 2 + 8, 22, 5);
+    shadow.endFill();
+    ct.addChild(shadow);
+
+    if (PlayerManager.heroDef.id === 'zhaoYun') {
+      const texSrc = getZhaoYunTextureSource();
+      if (texSrc) {
+        // 先放矢量占位，纹理异步加载完成后替换
+        const placeholder = new PIXI.Graphics();
+        this._drawPlayer(placeholder);
+        ct.addChild(placeholder);
+
+        const tex = PIXI.Texture.from(texSrc);
+        const applySprite = () => {
+          if (tex.baseTexture.height <= 1) return;
+          ct.removeChild(placeholder);
+          placeholder.destroy();
+          const sprite = new PIXI.Sprite(tex);
+          sprite.anchor.set(0.5, 0.98);
+          sprite.y = PLAYER_H / 2;
+          const targetH = 84;
+          sprite.scale.set(targetH / tex.height);
+          ct.addChild(sprite);
+          console.log(`[BattleScene] 赵云贴图已加载: ${tex.width}x${tex.height}`);
+        };
+        if (tex.baseTexture.valid) {
+          applySprite();
+        } else {
+          tex.baseTexture.on('loaded', applySprite);
+          tex.baseTexture.on('error', () => {
+            console.warn('[BattleScene] 赵云贴图加载失败，保留矢量占位');
+          });
+        }
+      } else {
+        const gfx = new PIXI.Graphics();
+        this._drawPlayer(gfx);
+        ct.addChild(gfx);
+      }
+    } else {
+      const gfx = new PIXI.Graphics();
+      this._drawPlayer(gfx);
+      ct.addChild(gfx);
+    }
+
+    this._entityContainer.addChild(ct);
+    PlayerManager.sprite = ct;
   }
 
   private _drawPlayer(g: PIXI.Graphics): void {
@@ -356,10 +440,10 @@ export class BattleScene implements Scene {
     g.endFill();
   }
 
-  private _updatePlayerSprite(dt: number): void {
+  private _updatePlayerSprite(dt: number, rx: number, ry: number): void {
     const sprite = PlayerManager.sprite;
     if (!sprite) return;
-    sprite.position.set(PlayerManager.x, PlayerManager.y);
+    sprite.position.set(rx, ry);
     sprite.alpha = PlayerManager.iframeTimer > 0
       ? (Math.floor(PlayerManager.iframeTimer * 10) % 2 === 0 ? 0.3 : 1) : 1;
     sprite.scale.x = PlayerManager.facingRight ? 1 : -1;

@@ -126,7 +126,7 @@ class SkillSystemClass {
     this._dashTimer = this._skillDef?.duration || 0.2;
     this._dashDuration = this._dashTimer;
     PlayerManager.iframeTimer = this._dashTimer + 0.1;
-    CameraSystem.addTrauma(0.2);
+    CameraSystem.addTrauma(0.1);
     VFXSystem.spawnSparks(PlayerManager.x, PlayerManager.y, 10, 0x33ccff, 1.5);
 
     // 路径上对敌人造成伤害
@@ -150,7 +150,7 @@ class SkillSystemClass {
     const rangePx = this._skillDef?.range || 100;
 
     VFXSystem.spawnSparks(px + dir * 40, py, 15, 0xff6644, 2);
-    CameraSystem.addTrauma(0.4);
+    CameraSystem.addTrauma(0.18);
     VFXSystem.hitstopFrames = 4;
 
     for (const e of EnemyManager.activeEnemies) {
@@ -182,7 +182,7 @@ class SkillSystemClass {
     this._dashTimer = 0.15;
     this._dashDuration = 0.15;
     PlayerManager.iframeTimer = 0.25;
-    CameraSystem.addTrauma(0.15);
+    CameraSystem.addTrauma(0.08);
     VFXSystem.spawnSparks(PlayerManager.x, PlayerManager.y, 8, 0xaaaacc, 1.5);
   }
 

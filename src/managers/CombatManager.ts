@@ -145,7 +145,7 @@ class CombatManagerClass {
     VFXSystem.spawnDeathExplosion(e.x, e.y, e.def.color);
     VFXSystem.addBloodSplatter(e.x, e.y, 0x661111);
     VFXSystem.addKill();
-    CameraSystem.addTrauma(0.2);
+    CameraSystem.addTrauma(0.1);
     RunManager.totalKills++;
     LootManager.spawnEnemyDrop(e.x, e.y, e.def.lootTableId || 'enemy_common');
 
